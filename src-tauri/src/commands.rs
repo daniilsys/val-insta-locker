@@ -3,6 +3,10 @@ use crate::config::{save_config, AppConfig, MapMacro};
 use crate::state::AppState;
 use crate::valorant::{agents, api, lockfile};
 
+fn log(app: &AppHandle, msg: impl Into<String>) {
+    let _ = app.emit("log-entry", msg.into());
+}
+
 // ─── Connection ───────────────────────────────────────────────────────────────
 
 #[tauri::command]
@@ -10,7 +14,14 @@ pub async fn connect(state: State<'_, AppState>, app: AppHandle) -> Result<serde
     let lock = lockfile::read_lockfile().map_err(|e| e.to_string())?;
 
     let player = api::get_player_info(&lock).await.map_err(|e| e.to_string())?;
-    let phase = api::get_current_phase(&lock).await.unwrap_or_else(|_| "menus".to_string());
+    let (phase, raw_phase) = api::get_current_phase(&lock).await
+        .unwrap_or_else(|_| ("menus".to_string(), "error".to_string()));
+
+    log(&app, format!("Connected: {} | PUUID: {}... | phase raw={} norm={}",
+        player.game_name,
+        &player.puuid[..player.puuid.len().min(8)],
+        raw_phase, phase
+    ));
 
     {
         let mut s = state.lock().await;
@@ -44,19 +55,21 @@ pub async fn poll_phase(state: State<'_, AppState>, app: AppHandle) -> Result<St
             drop(s);
             match lockfile::read_lockfile() {
                 Ok(new_lock) => {
-                    // Got the lockfile — fetch PUUID immediately
+                    log(&app, "Lockfile found — auto-connecting...");
                     let puuid = api::get_puuid(&new_lock).await.unwrap_or_default();
                     let player = api::get_player_info(&new_lock).await;
                     let mut s = state.lock().await;
                     s.lockfile = Some(new_lock.clone());
                     if !puuid.is_empty() {
-                        s.puuid = puuid;
+                        s.puuid = puuid.clone();
+                        log(&app, format!("PUUID (entitlements): {}...", &puuid[..puuid.len().min(8)]));
                     }
                     if let Ok(p) = player {
                         s.username = p.game_name.clone();
                         s.tag_line = p.tag_line.clone();
                         if s.puuid.is_empty() {
-                            s.puuid = p.puuid;
+                            s.puuid = p.puuid.clone();
+                            log(&app, format!("PUUID (fallback): {}...", &p.puuid[..p.puuid.len().min(8)]));
                         }
                         let _ = app.emit("connected", serde_json::json!({
                             "username": p.game_name,
@@ -70,10 +83,10 @@ pub async fn poll_phase(state: State<'_, AppState>, app: AppHandle) -> Result<St
         }
     };
 
-    let phase = match api::get_current_phase(&lock).await {
+    let (phase, raw_phase) = match api::get_current_phase(&lock).await {
         Ok(p) => p,
-        Err(_) => {
-            // Network error — Valorant likely restarted or closed. Clear stale lockfile.
+        Err(e) => {
+            log(&app, format!("Phase poll error (disconnected?): {e}"));
             let mut s = state.lock().await;
             s.lockfile = None;
             s.puuid.clear();
@@ -94,9 +107,9 @@ pub async fn poll_phase(state: State<'_, AppState>, app: AppHandle) -> Result<St
     };
 
     if phase != old_phase {
+        log(&app, format!("Phase: {} → {} (raw: {})", old_phase, phase, raw_phase));
         let _ = app.emit("phase-changed", &phase);
 
-        // Phase went back to menus/unknown after pregame — reset lock state
         if phase == "menus" || phase == "unknown" {
             let mut s = state.lock().await;
             s.is_locked = false;
@@ -106,29 +119,45 @@ pub async fn poll_phase(state: State<'_, AppState>, app: AppHandle) -> Result<St
         }
     }
 
-    // If we're in pregame and instalocker is running, attempt to lock
+    // Attempt to lock when in pregame
     if phase == "pregame" {
         let (is_running, is_locked, mut puuid, config) = {
             let s = state.lock().await;
             (s.is_running, s.is_locked, s.puuid.clone(), s.config.clone())
         };
 
-        // PUUID fallback — try entitlements if empty
+        // PUUID fallback
         if puuid.is_empty() {
-            if let Ok(p) = api::get_puuid(&lock).await {
-                let _ = app.emit("log-entry", format!("PUUID recovered via entitlements"));
-                let mut s = state.lock().await;
-                s.puuid = p.clone();
-                puuid = p;
-            } else {
-                let _ = app.emit("log-entry", "PUUID unavailable — cannot lock");
+            log(&app, "PUUID empty — fetching via entitlements...");
+            match api::get_puuid(&lock).await {
+                Ok(p) => {
+                    log(&app, format!("PUUID recovered: {}...", &p[..p.len().min(8)]));
+                    let mut s = state.lock().await;
+                    s.puuid = p.clone();
+                    puuid = p;
+                }
+                Err(e) => {
+                    log(&app, format!("PUUID fetch failed: {e}"));
+                }
             }
         }
 
-        if is_running && !is_locked && !puuid.is_empty() {
+        if !is_running {
+            // Not armed — nothing to do
+        } else if is_locked {
+            // Already locked this game
+        } else if puuid.is_empty() {
+            log(&app, "Cannot lock: PUUID still empty");
+        } else {
+            // Try to get the pregame match ID
             match api::get_pregame_match_id(&lock, &puuid).await {
-                Ok(match_id) if !match_id.is_empty() => {
-                    // Detect map for macro
+                Err(e) => {
+                    log(&app, format!("MatchID fetch failed (retrying next poll): {e}"));
+                }
+                Ok(match_id) if match_id.is_empty() => {
+                    log(&app, "MatchID empty — retrying next poll");
+                }
+                Ok(match_id) => {
                     let map = api::get_pregame_map(&lock, &match_id).await.unwrap_or_default();
                     {
                         let mut s = state.lock().await;
@@ -139,7 +168,6 @@ pub async fn poll_phase(state: State<'_, AppState>, app: AppHandle) -> Result<St
                         let _ = app.emit("map-detected", &map);
                     }
 
-                    // Determine agent + mode from macro or default config
                     let (agent_id, lock_mode) = if config.macro_enabled && !map.is_empty() {
                         if let Some(m) = config.map_macros.get(&map) {
                             (m.agent_id.clone(), m.lock_mode.clone())
@@ -151,41 +179,50 @@ pub async fn poll_phase(state: State<'_, AppState>, app: AppHandle) -> Result<St
                     };
 
                     if agent_id.is_empty() {
-                        let _ = app.emit("log-entry", "No agent selected — cannot lock");
+                        log(&app, "Cannot lock: no agent selected");
                         return Ok(phase);
                     }
 
-                    let _ = app.emit("log-entry", format!("Pregame detected — match {}", &match_id[..8.min(match_id.len())]));
+                    log(&app, format!(
+                        "Pregame match found. Map={} Agent={:.8} Mode={} Delay={}ms",
+                        if map.is_empty() { "unknown" } else { &map },
+                        &agent_id,
+                        lock_mode,
+                        config.delay_ms
+                    ));
 
-                    // Delay before locking
                     if config.delay_ms > 0 {
                         tokio::time::sleep(tokio::time::Duration::from_millis(config.delay_ms)).await;
                     }
 
-                    // Double-check cancel wasn't requested during delay
-                    let cancelled = {
-                        let s = state.lock().await;
-                        s.cancel_requested
-                    };
+                    let cancelled = { state.lock().await.cancel_requested };
 
-                    if !cancelled {
-                        // Always select first, then lock if mode == "lock"
+                    if cancelled {
+                        log(&app, "Lock cancelled during delay");
+                    } else {
+                        log(&app, format!("Calling select on match {}...", &match_id[..match_id.len().min(8)]));
                         let select_result = api::select_agent(&lock, &match_id, &agent_id).await;
-                        if let Err(ref e) = select_result {
-                            let _ = app.emit("log-entry", format!("Select failed: {e}"));
+                        match &select_result {
+                            Ok(_) => log(&app, "Select OK"),
+                            Err(e) => log(&app, format!("Select ERR: {e}")),
                         }
 
-                        let result = if lock_mode == "lock" {
-                            api::lock_agent(&lock, &match_id, &agent_id).await
+                        let final_result = if lock_mode == "lock" {
+                            log(&app, "Calling lock...");
+                            let r = api::lock_agent(&lock, &match_id, &agent_id).await;
+                            match &r {
+                                Ok(_) => log(&app, "Lock OK"),
+                                Err(e) => log(&app, format!("Lock ERR: {e}")),
+                            }
+                            r
                         } else {
-                            select_result.map_err(|e| e)
+                            select_result
                         };
 
-                        match result {
+                        match final_result {
                             Ok(_) => {
                                 let mut s = state.lock().await;
                                 s.is_locked = true;
-                                s.is_running = false;
                                 let _ = app.emit("lock-status", true);
                                 let _ = app.emit("agent-locked", &agent_id);
                             }
@@ -195,8 +232,6 @@ pub async fn poll_phase(state: State<'_, AppState>, app: AppHandle) -> Result<St
                         }
                     }
                 }
-                Ok(_) => {} // empty match_id, not in pregame yet
-                Err(_) => {} // not in pregame API yet, will retry next poll
             }
         }
     }
@@ -207,7 +242,7 @@ pub async fn poll_phase(state: State<'_, AppState>, app: AppHandle) -> Result<St
 // ─── Instalocker control ─────────────────────────────────────────────────────
 
 #[tauri::command]
-pub async fn start_instalocker(state: State<'_, AppState>) -> Result<(), String> {
+pub async fn start_instalocker(state: State<'_, AppState>, app: AppHandle) -> Result<(), String> {
     let mut s = state.lock().await;
     if s.config.selected_agent_id.is_empty() && !s.config.macro_enabled {
         return Err("No agent selected".to_string());
@@ -215,6 +250,11 @@ pub async fn start_instalocker(state: State<'_, AppState>) -> Result<(), String>
     s.is_running = true;
     s.is_locked = false;
     s.cancel_requested = false;
+    log(&app, format!("Armed — agent={} mode={} delay={}ms",
+        if s.config.selected_agent_id.is_empty() { "macro" } else { &s.config.selected_agent_name },
+        s.config.lock_mode,
+        s.config.delay_ms
+    ));
     Ok(())
 }
 
