@@ -1,131 +1,138 @@
 import { useStore, Agent } from "../../store";
 import { invoke } from "@tauri-apps/api/core";
-import clsx from "clsx";
 
 const ROLES = ["All", "Duelist", "Initiator", "Controller", "Sentinel"];
 
-const ROLE_COLORS: Record<string, string> = {
-  Duelist: "#FF4655",
-  Initiator: "#facc15",
+const ROLE_COLOR: Record<string, string> = {
+  Duelist:    "#FF4655",
+  Initiator:  "#facc15",
   Controller: "#818cf8",
-  Sentinel: "#4ade80",
+  Sentinel:   "#4ade80",
 };
 
 export function AgentGrid() {
-  const {
-    agents,
-    agentsLoaded,
-    config,
-    roleFilter,
-    setRoleFilter,
-    patchConfig,
-    addLog,
-  } = useStore();
+  const { agents, agentsLoaded, config, roleFilter, setRoleFilter, patchConfig, addLog } = useStore();
 
-  const filtered = agents.filter(
-    (a) => roleFilter === "All" || a.role === roleFilter
-  );
+  const filtered = roleFilter === "All" ? agents : agents.filter(a => a.role === roleFilter);
 
   const handleSelect = async (agent: Agent) => {
-    const newConfig = {
-      ...config,
-      selectedAgentId: agent.uuid,
-      selectedAgentName: agent.display_name,
-    };
+    const newConfig = { ...config, selectedAgentId: agent.uuid, selectedAgentName: agent.display_name };
     patchConfig({ selectedAgentId: agent.uuid, selectedAgentName: agent.display_name });
     addLog(`Agent selected: ${agent.display_name}`);
-    try {
-      await invoke("save_config_cmd", { config: newConfig });
-    } catch (e) {
-      addLog(`Failed to save config: ${e}`);
-    }
+    try { await invoke("save_config_cmd", { config: newConfig }); } catch {}
   };
 
   if (!agentsLoaded) {
     return (
-      <div className="flex-1 flex flex-col items-center justify-center gap-3 text-[#7b7b7b]">
-        <div className="w-8 h-8 border-2 border-[#FF4655] border-t-transparent rounded-full animate-spin" />
-        <span className="text-xs uppercase tracking-widest">Loading agents...</span>
+      <div style={{ flex:1, display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center", gap:10, color:"var(--text3)" }}>
+        <div style={{
+          width:24, height:24,
+          border:"2px solid var(--red)", borderTopColor:"transparent",
+          borderRadius:"50%", animation:"spin 0.7s linear infinite",
+        }} />
+        <span className="section-label">Loading agents...</span>
       </div>
     );
   }
 
   return (
-    <div className="flex-1 flex flex-col overflow-hidden">
-      {/* Role filter */}
-      <div className="flex gap-1.5 px-4 py-3 border-b border-[#2a2a2a]">
-        {ROLES.map((role) => (
+    <div style={{ flex:1, display:"flex", flexDirection:"column", overflow:"hidden" }}>
+      {/* Role tabs */}
+      <div style={{
+        display:"flex", gap:2, padding:"8px 10px",
+        borderBottom:"1px solid var(--border)",
+        flexShrink:0,
+      }}>
+        {ROLES.map(role => (
           <button
             key={role}
             onClick={() => setRoleFilter(role)}
-            className={clsx(
-              "px-3 py-1 text-xs font-bold uppercase tracking-widest transition-all duration-150",
-              "clip-path-[polygon(0_0,calc(100%-6px)_0,100%_6px,100%_100%,6px_100%,0_calc(100%-6px))]",
-              roleFilter === role
-                ? "bg-[#FF4655] text-white"
-                : "bg-[#1a1a1a] border border-[#2a2a2a] text-[#7b7b7b] hover:text-[#ece8e1] hover:border-[#FF4655]/40"
-            )}
-            style={
-              roleFilter === role
-                ? {}
-                : role !== "All"
-                ? { borderColor: ROLE_COLORS[role] + "33" }
-                : {}
-            }
+            style={{
+              padding: "4px 10px",
+              fontSize: "10px", fontWeight:700, letterSpacing:"0.1em", textTransform:"uppercase",
+              background: roleFilter === role ? "var(--red)" : "transparent",
+              color: roleFilter === role ? "#fff" : "var(--text3)",
+              border: `1px solid ${roleFilter === role ? "var(--red)" : role !== "All" ? (ROLE_COLOR[role]+"33") : "var(--border)"}`,
+              cursor:"pointer", transition:"all 150ms",
+              clipPath:"polygon(0 0, calc(100% - 4px) 0, 100% 4px, 100% 100%, 4px 100%, 0 calc(100% - 4px))",
+            }}
           >
-            {role === "All" ? "All Agents" : role}
+            {role === "All" ? "All" : role}
           </button>
         ))}
+        <span style={{ marginLeft:"auto", fontSize:"10px", color:"var(--text3)", alignSelf:"center" }}>
+          {filtered.length} agents
+        </span>
       </div>
 
       {/* Grid */}
-      <div className="flex-1 overflow-y-auto p-4">
-        <div className="grid grid-cols-6 gap-2">
-          {filtered.map((agent) => {
+      <div style={{ flex:1, overflowY:"auto", padding:"8px 10px" }}>
+        <div style={{
+          display:"grid",
+          gridTemplateColumns:"repeat(auto-fill, minmax(68px, 1fr))",
+          gap:5,
+        }}>
+          {filtered.map(agent => {
             const isSelected = config.selectedAgentId === agent.uuid;
             return (
               <button
                 key={agent.uuid}
                 onClick={() => handleSelect(agent)}
-                className={clsx("agent-card bg-[#1a1a1a] group", isSelected && "selected")}
-                title={agent.display_name}
+                className={`agent-card ${isSelected ? "selected" : ""}`}
+                title={`${agent.display_name} · ${agent.role}`}
               >
-                {/* Role accent line */}
-                <div
-                  className="absolute top-0 left-0 right-0 h-0.5 opacity-60"
-                  style={{ backgroundColor: ROLE_COLORS[agent.role] || "#7b7b7b" }}
-                />
+                {/* Role accent */}
+                <div style={{
+                  position:"absolute", top:0, left:0, right:0, height:2,
+                  background: ROLE_COLOR[agent.role] || "var(--border)",
+                  opacity: 0.7,
+                }} />
 
-                {/* Agent image */}
-                <div className="relative aspect-square bg-[#111] overflow-hidden">
+                {/* Image */}
+                <div style={{ aspectRatio:"1", background:"#111", overflow:"hidden" }}>
                   <img
                     src={agent.display_icon_small}
                     alt={agent.display_name}
-                    className="w-full h-full object-cover transition-transform duration-300 group-hover:scale-110"
+                    style={{ width:"100%", height:"100%", objectFit:"cover", display:"block",
+                      transition:"transform 200ms",
+                    }}
                     loading="lazy"
                   />
-                  {isSelected && (
-                    <div className="absolute inset-0 bg-[#FF4655]/10" />
-                  )}
                 </div>
 
                 {/* Name */}
-                <div className="px-1.5 py-1 text-center">
-                  <p className={clsx(
-                    "text-[9px] font-bold uppercase tracking-widest truncate leading-tight",
-                    isSelected ? "text-[#FF4655]" : "text-[#ece8e1]"
-                  )}>
+                <div style={{ padding:"3px 4px 4px", textAlign:"center" }}>
+                  <span style={{
+                    fontSize:"8px", fontWeight:700, letterSpacing:"0.06em",
+                    textTransform:"uppercase",
+                    color: isSelected ? "var(--red)" : "var(--text2)",
+                    display:"block", overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap",
+                  }}>
                     {agent.display_name}
-                  </p>
+                  </span>
                 </div>
+
+                {/* Selected checkmark */}
+                {isSelected && (
+                  <div style={{
+                    position:"absolute", top:4, right:4,
+                    width:12, height:12, borderRadius:"50%",
+                    background:"var(--red)",
+                    display:"flex", alignItems:"center", justifyContent:"center",
+                  }}>
+                    <svg width="7" height="7" viewBox="0 0 7 7" fill="none">
+                      <path d="M1 3.5L2.8 5.5L6 1.5" stroke="#fff" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round"/>
+                    </svg>
+                  </div>
+                )}
               </button>
             );
           })}
         </div>
 
         {filtered.length === 0 && (
-          <div className="flex items-center justify-center h-32 text-[#7b7b7b] text-xs uppercase tracking-widest">
-            No agents found
+          <div style={{ display:"flex", justifyContent:"center", padding:"40px 0", color:"var(--text3)" }}>
+            <span className="section-label">No agents found</span>
           </div>
         )}
       </div>

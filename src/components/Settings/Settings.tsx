@@ -1,109 +1,145 @@
 import { invoke } from "@tauri-apps/api/core";
-import { Save } from "lucide-react";
 import { useState } from "react";
+import { CheckCircle } from "lucide-react";
 import { useStore } from "../../store";
+
+function Toggle({ on, onToggle, label }: { on: boolean; onToggle: () => void; label: string }) {
+  return (
+    <button
+      className={`toggle ${on ? "on" : ""}`}
+      onClick={onToggle}
+      role="switch"
+      aria-checked={on}
+      aria-label={label}
+    />
+  );
+}
+
+function Row({ label, description, children }: { label: string; description?: string; children: React.ReactNode }) {
+  return (
+    <div style={{
+      display:"flex", alignItems:"center", justifyContent:"space-between", gap:12,
+      padding:"12px 0",
+      borderBottom:"1px solid var(--border)",
+    }}>
+      <div style={{ flex:1, minWidth:0 }}>
+        <p style={{ fontSize:12, fontWeight:700, color:"var(--text)", marginBottom:2 }}>{label}</p>
+        {description && <p style={{ fontSize:10, color:"var(--text3)", lineHeight:1.4 }}>{description}</p>}
+      </div>
+      <div style={{ flexShrink:0 }}>{children}</div>
+    </div>
+  );
+}
 
 export function Settings() {
   const { config, patchConfig, addLog } = useStore();
-  const [saved, setSaved] = useState(false);
+  const [savedKey, setSavedKey] = useState<string | null>(null);
 
-  const handleSave = async () => {
+  const save = async (patch: Partial<typeof config>) => {
+    const newConfig = { ...config, ...patch };
+    patchConfig(patch);
     try {
-      await invoke("save_config_cmd", { config });
-      addLog("Settings saved");
-      setSaved(true);
-      setTimeout(() => setSaved(false), 1500);
+      await invoke("save_config_cmd", { config: newConfig });
+      const key = Object.keys(patch)[0];
+      setSavedKey(key);
+      setTimeout(() => setSavedKey(null), 1200);
     } catch (e) {
-      addLog(`Failed to save settings: ${e}`);
+      addLog(`Save failed: ${e}`);
     }
   };
 
   return (
-    <div className="flex-1 overflow-y-auto p-6 space-y-6 animate-slide-up">
-      <div>
-        <h2 className="text-xs font-bold uppercase tracking-widest text-[#7b7b7b] mb-4">Settings</h2>
-      </div>
+    <div className="anim-slide-up" style={{ flex:1, overflowY:"auto", padding:"20px 24px" }}>
 
-      {/* Lock mode */}
-      <div className="panel p-4 space-y-3">
-        <p className="text-xs font-bold uppercase tracking-widest text-[#7b7b7b]">Lock Mode</p>
-        <div className="flex gap-2">
-          {(["lock", "select"] as const).map((mode) => (
-            <button
-              key={mode}
-              onClick={() => patchConfig({ lockMode: mode })}
-              className={`flex-1 py-2.5 text-xs font-bold uppercase tracking-widest transition-all duration-150 border ${
-                config.lockMode === mode
-                  ? "bg-[#FF4655] border-[#FF4655] text-white"
-                  : "bg-transparent border-[#2a2a2a] text-[#7b7b7b] hover:border-[#FF4655]/40 hover:text-[#ece8e1]"
-              }`}
-              style={{ clipPath: "polygon(0 0, calc(100% - 6px) 0, 100% 6px, 100% 100%, 6px 100%, 0 calc(100% - 6px))" }}
-            >
-              {mode === "lock" ? "Lock (instant)" : "Select Only"}
-            </button>
-          ))}
-        </div>
-        <p className="text-[11px] text-[#7b7b7b] leading-relaxed">
-          <span className="text-[#ece8e1] font-semibold">Lock</span> — immediately locks your agent. <br />
-          <span className="text-[#ece8e1] font-semibold">Select Only</span> — hovers the agent, Valorant auto-locks when time runs out (safer for ranked).
-        </p>
-      </div>
-
-      {/* Delay */}
-      <div className="panel p-4 space-y-3">
-        <div className="flex items-center justify-between">
-          <p className="text-xs font-bold uppercase tracking-widest text-[#7b7b7b]">Lock Delay</p>
-          <span className="text-sm font-bold text-[#FF4655]">{config.delayMs}ms</span>
-        </div>
-        <input
-          type="range"
-          min={0}
-          max={2000}
-          step={50}
-          value={config.delayMs}
-          onChange={(e) => patchConfig({ delayMs: Number(e.target.value) })}
-          className="w-full accent-[#FF4655] cursor-pointer"
-        />
-        <div className="flex justify-between text-[10px] text-[#555] uppercase tracking-widest">
-          <span>Instant</span>
-          <span>Human-like</span>
-          <span>2000ms</span>
-        </div>
-        <p className="text-[11px] text-[#7b7b7b]">
-          Small delay makes the lock look less like a bot. 100–300ms recommended.
-        </p>
-      </div>
-
-      {/* Macro mode toggle */}
-      <div className="panel p-4 space-y-3">
-        <div className="flex items-center justify-between">
-          <div>
-            <p className="text-xs font-bold uppercase tracking-widest text-[#7b7b7b]">Map Macros</p>
-            <p className="text-[11px] text-[#555] mt-0.5">Pick different agents per map automatically</p>
+      <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", marginBottom:20 }}>
+        <h2 style={{ fontSize:13, fontWeight:800, letterSpacing:"0.1em", textTransform:"uppercase", color:"var(--text)" }}>
+          Settings
+        </h2>
+        {savedKey && (
+          <div className="anim-fade-in" style={{
+            display:"flex", alignItems:"center", gap:5,
+            fontSize:10, fontWeight:700, color:"var(--green)",
+            letterSpacing:"0.1em", textTransform:"uppercase",
+          }}>
+            <CheckCircle size={11} />
+            Saved
           </div>
-          <button
-            onClick={() => patchConfig({ macroEnabled: !config.macroEnabled })}
-            className={`relative w-10 h-5 rounded-full transition-colors duration-200 ${
-              config.macroEnabled ? "bg-[#FF4655]" : "bg-[#2a2a2a]"
-            }`}
-          >
-            <div className={`absolute top-0.5 left-0.5 w-4 h-4 rounded-full bg-white transition-transform duration-200 ${
-              config.macroEnabled ? "translate-x-5" : "translate-x-0"
-            }`} />
-          </button>
-        </div>
-        {config.macroEnabled && (
-          <p className="text-[11px] text-[#facc15]">
-            Map macros active — go to the Macros tab to configure per-map agents.
-          </p>
         )}
       </div>
 
-      {/* Save button */}
-      <button onClick={handleSave} className="val-btn-primary w-full flex items-center justify-center gap-2">
-        <Save size={14} />
-        {saved ? "Saved!" : "Save Settings"}
-      </button>
+      {/* Lock Mode */}
+      <p className="section-label" style={{ marginBottom:4, marginTop:0 }}>Behaviour</p>
+      <div style={{ background:"var(--surface)", border:"1px solid var(--border)", padding:"0 14px",
+        clipPath:"polygon(0 0, calc(100% - 8px) 0, 100% 8px, 100% 100%, 8px 100%, 0 calc(100% - 8px))",
+        marginBottom:20,
+      }}>
+        <Row
+          label="Lock Mode"
+          description="Lock instantly vs. Select-Only (hover). Valorant auto-locks on timer end — Select-Only avoids AFK penalty."
+        >
+          <div className="seg-control" style={{ width:130 }}>
+            <button className={`seg-btn ${config.lockMode === "lock" ? "active" : ""}`}
+              onClick={() => save({ lockMode: "lock" })}>Lock</button>
+            <button className={`seg-btn ${config.lockMode === "select" ? "active" : ""}`}
+              onClick={() => save({ lockMode: "select" })}>Select</button>
+          </div>
+        </Row>
+
+        <Row
+          label="Lock Delay"
+          description={`${config.delayMs === 0 ? "Instant — locks immediately when agent select starts." : `${config.delayMs}ms — adds a small human-like pause before locking.`}`}
+        >
+          <div style={{ display:"flex", alignItems:"center", gap:10, width:160 }}>
+            <input
+              type="range" min={0} max={2000} step={50}
+              value={config.delayMs}
+              style={{ flex:1 }}
+              onChange={e => patchConfig({ delayMs: Number(e.target.value) })}
+              onMouseUp={e => save({ delayMs: Number((e.target as HTMLInputElement).value) })}
+            />
+            <span style={{ fontSize:11, fontWeight:700, color:"var(--red)", width:36, textAlign:"right" }}>
+              {config.delayMs}ms
+            </span>
+          </div>
+        </Row>
+      </div>
+
+      {/* Automation */}
+      <p className="section-label" style={{ marginBottom:4 }}>Automation</p>
+      <div style={{ background:"var(--surface)", border:"1px solid var(--border)", padding:"0 14px",
+        clipPath:"polygon(0 0, calc(100% - 8px) 0, 100% 8px, 100% 100%, 8px 100%, 0 calc(100% - 8px))",
+        marginBottom:20,
+      }}>
+        <Row
+          label="Map Macros"
+          description="Automatically pick a different agent depending on the map. Configure assignments in the Macros tab."
+        >
+          <Toggle
+            on={config.macroEnabled}
+            onToggle={() => save({ macroEnabled: !config.macroEnabled })}
+            label="Map macros"
+          />
+        </Row>
+      </div>
+
+      {/* Info */}
+      <p className="section-label" style={{ marginBottom:8 }}>About</p>
+      <div style={{
+        background:"var(--surface)", border:"1px solid var(--border)", padding:"12px 14px",
+        clipPath:"polygon(0 0, calc(100% - 8px) 0, 100% 8px, 100% 100%, 8px 100%, 0 calc(100% - 8px))",
+      }}>
+        <p style={{ fontSize:10, color:"var(--text3)", lineHeight:1.6 }}>
+          <span style={{ color:"var(--text)", fontWeight:700 }}>val-insta-locker</span> connects to Valorant's
+          local API via the lockfile at{" "}
+          <code style={{ fontSize:9, color:"var(--text2)", background:"var(--surface2)", padding:"1px 4px" }}>
+            %LOCALAPPDATA%\Riot Games\Riot Client\Config\lockfile
+          </code>.
+          It polls for game phase every 600ms and fires the select/lock API call automatically.
+        </p>
+        <p style={{ fontSize:10, color:"var(--text3)", marginTop:8, lineHeight:1.6 }}>
+          All settings are saved automatically on change.
+        </p>
+      </div>
     </div>
   );
 }

@@ -1,78 +1,97 @@
 import { useStore, GamePhase } from "../../store";
-import { Wifi, WifiOff, Crosshair, Shield } from "lucide-react";
+import { Wifi, WifiOff } from "lucide-react";
 
-const PHASE_LABELS: Record<GamePhase, string> = {
-  menus: "In Menus",
-  pregame: "Agent Select",
-  ingame: "In Game",
-  unknown: "Waiting...",
-};
-
-const PHASE_COLORS: Record<GamePhase, string> = {
-  menus: "#7b7b7b",
-  pregame: "#FF4655",
-  ingame: "#4ade80",
-  unknown: "#7b7b7b",
+const PHASE_META: Record<GamePhase, { label: string; color: string }> = {
+  menus:   { label: "In Menus",     color: "var(--text3)" },
+  pregame: { label: "Agent Select", color: "var(--red)" },
+  ingame:  { label: "In Game",      color: "var(--green)" },
+  unknown: { label: "Waiting...",   color: "var(--text3)" },
 };
 
 export function StatusBar() {
   const { connected, username, tagLine, phase, currentMap, isRunning, isLocked } = useStore();
+  const meta = PHASE_META[phase];
 
   return (
-    <div className="flex items-center justify-between px-4 py-2 border-b border-[#2a2a2a] bg-[#111111]">
-      {/* Left: connection status */}
-      <div className="flex items-center gap-3">
-        <div className="flex items-center gap-1.5">
-          {connected ? (
-            <Wifi size={14} className="text-[#4ade80]" />
-          ) : (
-            <WifiOff size={14} className="text-[#FF4655]" />
-          )}
-          <span className="text-xs font-bold uppercase tracking-widest" style={{ color: connected ? "#4ade80" : "#FF4655" }}>
+    <div style={{
+      display: "flex", alignItems: "center", justifyContent: "space-between",
+      padding: "0 16px", height: "32px",
+      borderBottom: "1px solid var(--border)",
+      background: "var(--surface)",
+      flexShrink: 0,
+    }}>
+      {/* Left: connection */}
+      <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
+        <div style={{ display: "flex", alignItems: "center", gap: "5px" }}>
+          {connected
+            ? <Wifi size={11} color="var(--green)" />
+            : <WifiOff size={11} color="var(--red)" />}
+          <span style={{
+            fontSize: "10px", fontWeight: 700, letterSpacing: "0.12em",
+            textTransform: "uppercase",
+            color: connected ? "var(--green)" : "var(--red)",
+          }}>
             {connected ? "Connected" : "Disconnected"}
           </span>
         </div>
 
         {connected && username && (
           <>
-            <div className="w-px h-3 bg-[#2a2a2a]" />
-            <span className="text-xs text-[#ece8e1] font-semibold">
+            <div style={{ width: 1, height: 10, background: "var(--border)" }} />
+            <span style={{ fontSize: "11px", fontWeight: 600, color: "var(--text)" }}>
               {username}
-              {tagLine && <span className="text-[#7b7b7b]">#{tagLine}</span>}
+              <span style={{ color: "var(--text3)" }}>#{tagLine}</span>
             </span>
           </>
         )}
       </div>
 
-      {/* Center: phase indicator */}
-      <div className="flex items-center gap-2">
-        <div
-          className="status-dot animate-pulse"
-          style={{ backgroundColor: PHASE_COLORS[phase] }}
-        />
-        <span
-          className="text-xs font-bold uppercase tracking-widest"
-          style={{ color: PHASE_COLORS[phase] }}
-        >
-          {PHASE_LABELS[phase]}
+      {/* Center: phase */}
+      <div style={{ display: "flex", alignItems: "center", gap: "7px" }}>
+        <div style={{
+          width: 6, height: 6, borderRadius: "50%",
+          background: meta.color,
+          boxShadow: phase !== "unknown" && phase !== "menus" ? `0 0 6px ${meta.color}` : "none",
+        }} />
+        <span style={{
+          fontSize: "10px", fontWeight: 700, letterSpacing: "0.12em",
+          textTransform: "uppercase", color: meta.color,
+        }}>
+          {meta.label}
         </span>
         {currentMap && phase === "pregame" && (
-          <span className="text-xs text-[#7b7b7b] ml-1">— {currentMap}</span>
+          <span style={{ fontSize: "10px", color: "var(--text3)" }}>— {currentMap}</span>
         )}
       </div>
 
-      {/* Right: instalocker status */}
-      <div className="flex items-center gap-2">
+      {/* Right: instalocker badge */}
+      <div style={{ display: "flex", alignItems: "center", gap: "6px", width: "120px", justifyContent: "flex-end" }}>
         {isLocked && (
-          <div className="tag bg-[#FF4655]/20 text-[#FF4655] animate-lock-flash">
-            <Crosshair size={10} />
-            Locked
+          <div className="anim-locked-in" style={{
+            display: "flex", alignItems: "center", gap: "4px",
+            padding: "2px 8px",
+            background: "rgba(74,222,128,0.1)",
+            border: "1px solid rgba(74,222,128,0.3)",
+            clipPath: "polygon(0 0, calc(100% - 5px) 0, 100% 5px, 100% 100%, 0 100%)",
+          }}>
+            <div style={{ width:5, height:5, borderRadius:"50%", background:"var(--green)" }} />
+            <span style={{ fontSize:"9px", fontWeight:700, letterSpacing:"0.12em", textTransform:"uppercase", color:"var(--green)" }}>
+              LOCKED
+            </span>
           </div>
         )}
         {isRunning && !isLocked && (
-          <div className="tag bg-[#facc15]/10 text-[#facc15] animate-pulse-red">
-            <Shield size={10} />
-            Armed
+          <div style={{
+            display: "flex", alignItems: "center", gap: "4px",
+            padding: "2px 8px",
+            background: "var(--red-dim)",
+            border: "1px solid var(--red-border)",
+            clipPath: "polygon(0 0, calc(100% - 5px) 0, 100% 5px, 100% 100%, 0 100%)",
+          }}>
+            <div style={{ width:5, height:5, borderRadius:"50%", background:"var(--red)", animation:"arm-pulse 1.5s infinite" }} />
+            <span style={{ fontSize:"9px", fontWeight:700, letterSpacing:"0.12em", textTransform:"uppercase", color:"var(--red)" }}>
+              ARMED
+            </span>
           </div>
         )}
       </div>

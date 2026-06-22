@@ -2,41 +2,32 @@ import { useEffect, useRef } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { useStore, GamePhase } from "./store";
-import { Sidebar } from "./components/Sidebar/Sidebar";
-import { StatusBar } from "./components/StatusBar/StatusBar";
-import { AgentGrid } from "./components/AgentGrid/AgentGrid";
-import { LockPanel } from "./components/LockPanel/LockPanel";
-import { Settings } from "./components/Settings/Settings";
-import { MacroPanel } from "./components/MacroPanel/MacroPanel";
-import { Logs } from "./components/Logs/Logs";
+import { Sidebar }      from "./components/Sidebar/Sidebar";
+import { StatusBar }    from "./components/StatusBar/StatusBar";
+import { AgentGrid }    from "./components/AgentGrid/AgentGrid";
+import { ControlPanel } from "./components/ControlPanel/ControlPanel";
+import { Settings }     from "./components/Settings/Settings";
+import { MacroPanel }   from "./components/MacroPanel/MacroPanel";
+import { Logs }         from "./components/Logs/Logs";
 
 export default function App() {
   const {
     activeView,
-    setConnected,
-    setUsername,
-    setPhase,
-    setCurrentMap,
-    setRunning,
-    setLocked,
-    setAgents,
-    setAgentsLoaded,
-    setConfig,
-    addLog,
+    setConnected, setUsername, setPhase, setCurrentMap,
+    setRunning, setLocked,
+    setAgents, setAgentsLoaded,
+    setConfig, addLog,
   } = useStore();
 
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
-  // Bootstrap
   useEffect(() => {
     (async () => {
-      // Load config
       try {
         const cfg = await invoke<any>("get_config");
         setConfig(cfg);
       } catch {}
 
-      // Fetch agents
       try {
         const agents = await invoke<any[]>("get_agents");
         setAgents(agents);
@@ -47,13 +38,12 @@ export default function App() {
         setAgentsLoaded(true);
       }
 
-      // Connect to Valorant
       try {
-        const result = await invoke<{ username: string; tagLine: string; phase: string }>("connect");
+        const r = await invoke<{ username: string; tagLine: string; phase: string }>("connect");
         setConnected(true);
-        setUsername(result.username, result.tagLine);
-        setPhase(result.phase as GamePhase);
-        addLog(`Connected as ${result.username}#${result.tagLine} — phase: ${result.phase}`);
+        setUsername(r.username, r.tagLine);
+        setPhase(r.phase as GamePhase);
+        addLog(`Connected as ${r.username}#${r.tagLine} — phase: ${r.phase}`);
       } catch (e) {
         addLog(`Valorant not running: ${e}`);
         setConnected(false);
@@ -61,67 +51,59 @@ export default function App() {
     })();
   }, []);
 
-  // Tauri event listeners
   useEffect(() => {
     const unsubs: (() => void)[] = [];
 
-    listen<string>("phase-changed", (e) => {
+    listen<string>("phase-changed", e => {
       setPhase(e.payload as GamePhase);
-      addLog(`Phase changed: ${e.payload}`);
-    }).then((u) => unsubs.push(u));
+      addLog(`Phase: ${e.payload}`);
+    }).then(u => unsubs.push(u));
 
-    listen<string>("map-detected", (e) => {
-      if (e.payload) {
-        setCurrentMap(e.payload);
-        addLog(`Map detected: ${e.payload}`);
-      }
-    }).then((u) => unsubs.push(u));
+    listen<string>("map-detected", e => {
+      if (e.payload) { setCurrentMap(e.payload); addLog(`Map: ${e.payload}`); }
+    }).then(u => unsubs.push(u));
 
-    listen<boolean>("lock-status", (e) => {
+    listen<boolean>("lock-status", e => {
       setLocked(e.payload);
       if (!e.payload) setRunning(false);
-    }).then((u) => unsubs.push(u));
+    }).then(u => unsubs.push(u));
 
-    listen<string>("agent-locked", (e) => {
-      addLog(`Agent locked: ${e.payload}`);
-    }).then((u) => unsubs.push(u));
+    listen<string>("agent-locked", e => {
+      addLog(`Locked: ${e.payload}`);
+    }).then(u => unsubs.push(u));
 
-    listen<string>("lock-error", (e) => {
-      addLog(`Lock error: ${e.payload}`);
-    }).then((u) => unsubs.push(u));
+    listen<string>("lock-error", e => {
+      addLog(`Error: ${e.payload}`);
+    }).then(u => unsubs.push(u));
 
-    return () => unsubs.forEach((u) => u());
+    return () => unsubs.forEach(u => u());
   }, []);
 
-  // Phase polling every 600ms
   useEffect(() => {
     pollRef.current = setInterval(async () => {
-      try {
-        await invoke("poll_phase");
-      } catch {}
+      try { await invoke("poll_phase"); } catch {}
     }, 600);
-
-    return () => {
-      if (pollRef.current) clearInterval(pollRef.current);
-    };
+    return () => { if (pollRef.current) clearInterval(pollRef.current); };
   }, []);
 
   return (
-    <div className="flex flex-col h-screen overflow-hidden bg-[#0f0f0f]">
+    <div style={{ display:"flex", flexDirection:"column", height:"100vh", overflow:"hidden" }}>
       <StatusBar />
-      <div className="flex flex-1 overflow-hidden">
+      <div style={{ display:"flex", flex:1, overflow:"hidden" }}>
         <Sidebar />
-        <main className="flex-1 flex flex-col overflow-hidden">
+
+        {/* Main content */}
+        <div style={{ flex:1, display:"flex", overflow:"hidden" }}>
           {activeView === "dashboard" && (
             <>
               <AgentGrid />
-              <LockPanel />
+              <ControlPanel />
             </>
           )}
           {activeView === "settings" && <Settings />}
-          {activeView === "macros" && <MacroPanel />}
-          {activeView === "logs" && <Logs />}
-        </main>
+          {activeView === "macros"   && <MacroPanel />}
+          {activeView === "logs"     && <Logs />}
+        </div>
       </div>
     </div>
   );
