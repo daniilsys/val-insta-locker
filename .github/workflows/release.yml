@@ -1,0 +1,68 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version tag (e.g. v1.0.0)"
+        required: false
+
+jobs:
+  build-windows:
+    name: Build Windows
+    runs-on: windows-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-msvc
+
+      - name: Rust cache
+        uses: swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri -> target
+
+      - name: Install frontend deps
+        run: npm ci
+
+      - name: Build Tauri app
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tagName: ${{ github.ref_name }}
+          releaseName: "val-insta-locker ${{ github.ref_name }}"
+          releaseBody: |
+            ## val-insta-locker ${{ github.ref_name }}
+
+            ### Download
+            | File | Description |
+            |------|-------------|
+            | `val-insta-locker_*_x64-setup.exe` | **Installer** (recommended) |
+            | `val-insta-locker_*_x64_en-US.msi` | MSI installer |
+
+            ### Requirements
+            - Windows 10/11 x64
+            - Valorant must be running for the instalocker to connect
+
+            ### Disclaimer
+            For educational/personal use only. Use at your own risk.
+          releaseDraft: false
+          prerelease: false
+          includeUpdaterJson: false
+          args: --target x86_64-pc-windows-msvc
