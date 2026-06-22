@@ -18,23 +18,56 @@ pub struct PlayerInfo {
     pub tag_line: String,
 }
 
-pub async fn get_player_info(lock: &LockfileData) -> Result<PlayerInfo> {
+/// Fetch PUUID from the entitlements token endpoint — most reliable source.
+pub async fn get_puuid(lock: &LockfileData) -> Result<String> {
     let client = build_client()?;
     let resp = client
-        .get(format!("{}/chat/v1/session", lock.base_url()))
+        .get(format!("{}/entitlements/v1/token", lock.base_url()))
         .header("Authorization", format!("Basic {}", lock.basic_auth()))
         .send()
         .await?;
 
     if !resp.status().is_success() {
-        bail!("chat/v1/session returned {}", resp.status());
+        bail!("entitlements/v1/token returned {}", resp.status());
     }
     let v: Value = resp.json().await?;
-    Ok(PlayerInfo {
-        puuid: v["puuid"].as_str().unwrap_or("").to_string(),
-        game_name: v["game_name"].as_str().unwrap_or("Player").to_string(),
-        tag_line: v["game_tag"].as_str().unwrap_or("").to_string(),
-    })
+    let puuid = v["subject"].as_str().unwrap_or("").to_string();
+    if puuid.is_empty() {
+        bail!("entitlements/v1/token: missing 'subject' field");
+    }
+    Ok(puuid)
+}
+
+pub async fn get_player_info(lock: &LockfileData) -> Result<PlayerInfo> {
+    // PUUID from entitlements is always available when Riot Client is running
+    let puuid = get_puuid(lock).await?;
+
+    // Name/tag from chat session — optional, best-effort
+    let (game_name, tag_line) = {
+        let client = build_client()?;
+        if let Ok(resp) = client
+            .get(format!("{}/chat/v1/session", lock.base_url()))
+            .header("Authorization", format!("Basic {}", lock.basic_auth()))
+            .send()
+            .await
+        {
+            if resp.status().is_success() {
+                if let Ok(v) = resp.json::<Value>().await {
+                    let name = v["game_name"].as_str().unwrap_or("Player").to_string();
+                    let tag = v["game_tag"].as_str().unwrap_or("").to_string();
+                    (name, tag)
+                } else {
+                    ("Player".to_string(), "".to_string())
+                }
+            } else {
+                ("Player".to_string(), "".to_string())
+            }
+        } else {
+            ("Player".to_string(), "".to_string())
+        }
+    };
+
+    Ok(PlayerInfo { puuid, game_name, tag_line })
 }
 
 pub async fn get_current_phase(lock: &LockfileData) -> Result<String> {

@@ -76,6 +76,21 @@ export default function App() {
       addLog(`Error: ${e.payload}`);
     }).then(u => unsubs.push(u));
 
+    listen<string>("log-entry", e => {
+      addLog(e.payload);
+    }).then(u => unsubs.push(u));
+
+    listen<{ username: string; tagLine: string }>("connected", e => {
+      setConnected(true);
+      setUsername(e.payload.username, e.payload.tagLine);
+      addLog(`Auto-connected as ${e.payload.username}#${e.payload.tagLine}`);
+    }).then(u => unsubs.push(u));
+
+    listen("disconnected", () => {
+      setConnected(false);
+      addLog("Valorant closed — waiting to reconnect...");
+    }).then(u => unsubs.push(u));
+
     return () => unsubs.forEach(u => u());
   }, []);
 
