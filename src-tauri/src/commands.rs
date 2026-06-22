@@ -110,7 +110,12 @@ pub async fn poll_phase(state: State<'_, AppState>, app: AppHandle) -> Result<St
         log(&app, format!("Phase: {} → {} (raw: {})", old_phase, phase, raw_phase));
         let _ = app.emit("phase-changed", &phase);
 
-        if phase == "menus" || phase == "unknown" {
+        // Reset lock state only when the game actually ended (ingame → anything)
+        // or when explicitly back in menus. Don't reset on "unknown" — that's also
+        // what "Idle" maps to, which can appear during agent select.
+        let game_ended = old_phase == "ingame" && phase != "ingame";
+        let back_to_menus = phase == "menus";
+        if game_ended || back_to_menus {
             let mut s = state.lock().await;
             s.is_locked = false;
             s.pregame_match_id.clear();
@@ -119,15 +124,17 @@ pub async fn poll_phase(state: State<'_, AppState>, app: AppHandle) -> Result<St
         }
     }
 
-    // Attempt to lock when in pregame
-    if phase == "pregame" {
+    // Attempt to lock: poll pregame API directly regardless of reported phase.
+    // external-sessions can return "Idle" during agent select, so we can't rely on phase == "pregame".
+    // We skip only when already ingame (no point) or already locked.
+    if phase != "ingame" {
         let (is_running, is_locked, mut puuid, config) = {
             let s = state.lock().await;
             (s.is_running, s.is_locked, s.puuid.clone(), s.config.clone())
         };
 
         // PUUID fallback
-        if puuid.is_empty() {
+        if is_running && puuid.is_empty() {
             log(&app, "PUUID empty — fetching via entitlements...");
             match api::get_puuid(&lock).await {
                 Ok(p) => {
@@ -149,13 +156,13 @@ pub async fn poll_phase(state: State<'_, AppState>, app: AppHandle) -> Result<St
         } else if puuid.is_empty() {
             log(&app, "Cannot lock: PUUID still empty");
         } else {
-            // Try to get the pregame match ID
+            // Try to get the pregame match ID — returns Err/404 when not in agent select
             match api::get_pregame_match_id(&lock, &puuid).await {
-                Err(e) => {
-                    log(&app, format!("MatchID fetch failed (retrying next poll): {e}"));
+                Err(_) => {
+                    // Not in agent select yet — silent, retry next poll
                 }
                 Ok(match_id) if match_id.is_empty() => {
-                    log(&app, "MatchID empty — retrying next poll");
+                    // No match yet
                 }
                 Ok(match_id) => {
                     let map = api::get_pregame_map(&lock, &match_id).await.unwrap_or_default();
