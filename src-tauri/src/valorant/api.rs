@@ -88,9 +88,11 @@ pub async fn get_current_phase(lock: &LockfileData) -> Result<(String, String)> 
             if session["productId"].as_str() == Some("valorant") {
                 let raw = session["phase"].as_str().unwrap_or("unknown").to_string();
                 let normalized = match raw.to_lowercase().as_str() {
-                    "menus" | "lobby" | "mainmenu" | "home" => "menus",
-                    "pregame" | "agent_select" | "agentselect" | "characterselect" => "pregame",
-                    "ingame" | "in_game" | "inprogress" | "ingameclient" | "ıngame" | "gameplay" => "ingame",
+                    "menus" | "lobby" | "mainmenu" | "home" | "idle" => "menus",
+                    // "Gameplay" = agent select phase (confirmed from original repo)
+                    "pregame" | "agent_select" | "agentselect" | "characterselect" | "gameplay" => "pregame",
+                    // "ingame" / "ıngame" = actual in-game (match started)
+                    "ingame" | "in_game" | "inprogress" | "ingameclient" | "ıngame" => "ingame",
                     _ => "unknown",
                 };
                 return Ok((normalized.to_string(), raw));
