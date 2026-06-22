@@ -50,11 +50,14 @@ pub fn read_glz_url() -> Result<String> {
     for line in content.lines() {
         if let Some(idx) = line.find("https://glz") {
             let rest = &line[idx..];
+            // Stop at ".net" to get only the base URL, not any path after it
             let end = rest
-                .find(|c: char| c.is_whitespace() || c == '"' || c == '\'')
+                .find(".net")
+                .map(|i| i + 4)
+                .or_else(|| rest.find(|c: char| c.is_whitespace() || c == '"' || c == '\''))
                 .unwrap_or(rest.len());
             let url = rest[..end].trim_end_matches('/');
-            if url.contains(".net") {
+            if url.starts_with("https://glz") {
                 last_glz = Some(url.to_string());
             }
         }
