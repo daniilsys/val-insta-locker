@@ -43,7 +43,6 @@ export default function App() {
         setConnected(true);
         setUsername(r.username, r.tagLine);
         setPhase(r.phase as GamePhase);
-        addLog(`Connected as ${r.username}#${r.tagLine} — phase: ${r.phase}`);
       } catch (e) {
         addLog(`Valorant not running: ${e}`);
         setConnected(false);
@@ -56,7 +55,6 @@ export default function App() {
 
     listen<string>("phase-changed", e => {
       setPhase(e.payload as GamePhase);
-      addLog(`Phase: ${e.payload}`);
     }).then(u => unsubs.push(u));
 
     listen<string>("map-detected", e => {

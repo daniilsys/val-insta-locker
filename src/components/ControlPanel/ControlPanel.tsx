@@ -1,5 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
-import { Shield, X, LogOut, Crosshair, Map } from "lucide-react";
+import { Shield, X, Crosshair, Map } from "lucide-react";
 import { useStore } from "../../store";
 
 function Toggle({ on, onToggle, label }: { on: boolean; onToggle: () => void; label?: string }) {
@@ -21,7 +21,7 @@ function Toggle({ on, onToggle, label }: { on: boolean; onToggle: () => void; la
 
 export function ControlPanel() {
   const {
-    connected, config, isRunning, isLocked, phase, agents,
+    connected, config, isRunning, agents,
     patchConfig, setRunning, setLocked, addLog,
     setActiveView,
   } = useStore();
@@ -41,7 +41,6 @@ export function ControlPanel() {
       await invoke("start_instalocker");
       setRunning(true);
       setLocked(false);
-      addLog(`Armed — waiting for agent select (${config.lockMode} mode, ${config.delayMs}ms delay)`);
     } catch (e) { addLog(`Error: ${e}`); }
   };
 
@@ -51,13 +50,6 @@ export function ControlPanel() {
       setRunning(false);
       setLocked(false);
       addLog("Instalocker disarmed");
-    } catch (e) { addLog(`Error: ${e}`); }
-  };
-
-  const handleQuit = async () => {
-    try {
-      await invoke("quit_pregame");
-      addLog("Pregame abandoned");
     } catch (e) { addLog(`Error: ${e}`); }
   };
 
@@ -225,7 +217,7 @@ export function ControlPanel() {
         {/* Divider */}
         <div style={{ height:1, background:"var(--border)", margin:"4px 0 14px" }} />
 
-        {/* ARM / DISARM / LOCKED */}
+        {/* ARM / DISARM */}
         {!isRunning && (
           <button
             onClick={handleArm}
@@ -237,7 +229,7 @@ export function ControlPanel() {
           </button>
         )}
 
-        {isRunning && !isLocked && (
+        {isRunning && (
           <div style={{ display:"flex", flexDirection:"column", gap:8 }}>
             <div style={{
               padding:"10px 14px",
@@ -258,45 +250,6 @@ export function ControlPanel() {
               Disarm
             </button>
           </div>
-        )}
-
-        {isRunning && isLocked && (
-          <div style={{ display:"flex", flexDirection:"column", gap:8 }}>
-            <div
-              className="anim-locked-in"
-              style={{
-                padding:"10px 14px",
-                background:"rgba(74,222,128,0.08)",
-                border:"1px solid rgba(74,222,128,0.3)",
-                clipPath:"polygon(0 0, calc(100% - 8px) 0, 100% 8px, 100% 100%, 8px 100%, 0 calc(100% - 8px))",
-                textAlign:"center",
-              }}
-            >
-              <p style={{ fontSize:11, fontWeight:700, color:"var(--green)", letterSpacing:"0.12em", textTransform:"uppercase" }}>
-                ✓ Agent Locked
-              </p>
-              <p style={{ fontSize:9, fontWeight:600, color:"var(--green)", opacity:0.6, marginTop:2, letterSpacing:"0.06em" }}>
-                Armed for next game
-              </p>
-            </div>
-            <button onClick={handleCancel} className="btn-ghost" style={{ width:"100%" }}>
-              <X size={12} />
-              Disarm
-            </button>
-          </div>
-        )}
-
-        {/* Quit pregame */}
-        {(phase === "pregame" || isLocked) && (
-          <button
-            onClick={handleQuit}
-            className="btn-danger"
-            style={{ width:"100%", marginTop:8 }}
-            title="Abandon this match — standard Valorant penalties apply"
-          >
-            <LogOut size={12} />
-            Abandon Match
-          </button>
         )}
       </div>
 

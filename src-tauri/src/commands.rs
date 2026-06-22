@@ -10,11 +10,7 @@ fn log(app: &AppHandle, msg: impl Into<String>) {
 async fn build_remote_auth(lock: &lockfile::LockfileData, app: &AppHandle) -> Option<api::RemoteAuth> {
     match api::get_remote_auth(lock).await {
         Ok(auth) => {
-            log(app, format!(
-                "Remote auth OK — GLZ={} version={}",
-                &auth.glz_url,
-                if auth.client_version.is_empty() { "unknown" } else { &auth.client_version }
-            ));
+            log(app, format!("Remote auth OK (GLZ: {})", glz_hostname(&auth.glz_url)));
             Some(auth)
         }
         Err(e) => {
@@ -22,6 +18,10 @@ async fn build_remote_auth(lock: &lockfile::LockfileData, app: &AppHandle) -> Op
             None
         }
     }
+}
+
+fn glz_hostname(url: &str) -> &str {
+    url.trim_start_matches("https://").split('.').next().unwrap_or("?")
 }
 
 // ─── Connection ───────────────────────────────────────────────────────────────
@@ -34,12 +34,7 @@ pub async fn connect(state: State<'_, AppState>, app: AppHandle) -> Result<serde
     let (phase, raw_phase) = api::get_current_phase(&lock).await
         .unwrap_or_else(|_| ("menus".to_string(), "error".to_string()));
 
-    log(&app, format!(
-        "Connected: {} | PUUID: {}... | phase raw={} norm={}",
-        player.game_name,
-        &player.puuid[..player.puuid.len().min(8)],
-        raw_phase, phase
-    ));
+    log(&app, format!("Connected: {} | phase: {}", player.game_name, phase));
 
     let remote_auth = build_remote_auth(&lock, &app).await;
 
@@ -123,18 +118,15 @@ pub async fn poll_phase(state: State<'_, AppState>, app: AppHandle) -> Result<St
     };
 
     if phase != old_phase {
-        log(&app, format!("Phase: {} → {} (raw: {})", old_phase, phase, raw_phase));
+        log(&app, format!("Phase: {} → {}", old_phase, phase));
         let _ = app.emit("phase-changed", &phase);
 
-        // Reset lock state when game ends or go back to lobby
-        let game_ended = old_phase == "ingame" && phase != "ingame";
-        let back_to_menus = phase == "menus";
-        if game_ended || back_to_menus {
+        // Any phase change resets lock state so the next game can be locked
+        {
             let mut s = state.lock().await;
             s.is_locked = false;
             s.pregame_match_id.clear();
             s.current_map.clear();
-            let _ = app.emit("lock-status", false);
         }
 
         // When entering pregame (Gameplay phase), refresh remote auth to have latest tokens
@@ -205,7 +197,7 @@ pub async fn poll_phase(state: State<'_, AppState>, app: AppHandle) -> Result<St
                     }
 
                     log(&app, format!(
-                        "Agent select found! Map={} Agent={:.8}... Mode={} Delay={}ms",
+                        "Agent select — map={} agent={:.8}... mode={} delay={}ms",
                         if map.is_empty() { "unknown" } else { &map },
                         &agent_id, lock_mode, config.delay_ms
                     ));
@@ -220,20 +212,14 @@ pub async fn poll_phase(state: State<'_, AppState>, app: AppHandle) -> Result<St
                         return Ok(phase);
                     }
 
-                    log(&app, "Calling select...");
                     let select_result = api::select_agent(&auth, &match_id, &agent_id).await;
-                    match &select_result {
-                        Ok(_) => log(&app, "Select OK"),
-                        Err(e) => log(&app, format!("Select ERR: {e}")),
+                    if let Err(e) = &select_result {
+                        log(&app, format!("Select ERR: {e}"));
                     }
 
                     let final_result = if lock_mode == "lock" {
-                        log(&app, "Calling lock...");
                         let r = api::lock_agent(&auth, &match_id, &agent_id).await;
-                        match &r {
-                            Ok(_) => log(&app, "Lock OK ✓"),
-                            Err(e) => log(&app, format!("Lock ERR: {e}")),
-                        }
+                        if let Err(e) = &r { log(&app, format!("Lock ERR: {e}")); }
                         r
                     } else {
                         select_result
@@ -241,9 +227,9 @@ pub async fn poll_phase(state: State<'_, AppState>, app: AppHandle) -> Result<St
 
                     match final_result {
                         Ok(_) => {
+                            log(&app, "Locked ✓ — armed for next game");
                             let mut s = state.lock().await;
                             s.is_locked = true;
-                            let _ = app.emit("lock-status", true);
                             let _ = app.emit("agent-locked", &agent_id);
                         }
                         Err(e) => {
