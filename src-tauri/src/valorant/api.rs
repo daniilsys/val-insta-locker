@@ -55,8 +55,15 @@ pub async fn get_current_phase(lock: &LockfileData) -> Result<String> {
     if let Some(obj) = v.as_object() {
         for (_, session) in obj {
             if session["productId"].as_str() == Some("valorant") {
-                let phase = session["phase"].as_str().unwrap_or("unknown").to_lowercase();
-                return Ok(phase);
+                let raw = session["phase"].as_str().unwrap_or("unknown").to_lowercase();
+                // Normalize Valorant phase strings to our known set
+                let phase = match raw.as_str() {
+                    "menus" | "lobby" | "mainmenu" | "home" => "menus",
+                    "pregame" | "agent_select" | "agentselect" => "pregame",
+                    "ingame" | "in_game" | "inprogress" | "ingameclient" | "ıngame" => "ingame",
+                    _ => "unknown",
+                };
+                return Ok(phase.to_string());
             }
         }
     }

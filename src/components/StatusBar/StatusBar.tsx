@@ -1,16 +1,17 @@
-import { useStore, GamePhase } from "../../store";
+import { useStore } from "../../store";
 import { Wifi, WifiOff } from "lucide-react";
 
-const PHASE_META: Record<GamePhase, { label: string; color: string }> = {
+const PHASE_META: Record<string, { label: string; color: string }> = {
   menus:   { label: "In Menus",     color: "var(--text3)" },
   pregame: { label: "Agent Select", color: "var(--red)" },
   ingame:  { label: "In Game",      color: "var(--green)" },
   unknown: { label: "Waiting...",   color: "var(--text3)" },
 };
+const FALLBACK_META = { label: "Waiting...", color: "var(--text3)" };
 
 export function StatusBar() {
   const { connected, username, tagLine, phase, currentMap, isRunning, isLocked } = useStore();
-  const meta = PHASE_META[phase];
+  const meta = PHASE_META[phase] ?? FALLBACK_META;
 
   return (
     <div style={{

@@ -94,7 +94,10 @@ export const useStore = create<AppStore>((set) => ({
 
   setConnected: (v) => set({ connected: v }),
   setUsername: (name, tag) => set({ username: name, tagLine: tag }),
-  setPhase: (p) => set({ phase: p }),
+  setPhase: (p) => {
+    const known: GamePhase[] = ["menus", "pregame", "ingame", "unknown"];
+    set({ phase: known.includes(p) ? p : "unknown" });
+  },
   setCurrentMap: (m) => set({ currentMap: m }),
   setRunning: (v) => set({ isRunning: v }),
   setLocked: (v) => set({ isLocked: v }),
