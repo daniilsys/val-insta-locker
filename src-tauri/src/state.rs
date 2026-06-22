@@ -2,11 +2,13 @@ use std::sync::Arc;
 use tokio::sync::Mutex;
 use crate::config::AppConfig;
 use crate::valorant::lockfile::LockfileData;
+use crate::valorant::api::RemoteAuth;
 
 #[derive(Default)]
 pub struct InnerState {
     pub config: AppConfig,
     pub lockfile: Option<LockfileData>,
+    pub remote_auth: Option<RemoteAuth>,
     pub puuid: String,
     pub username: String,
     pub tag_line: String,

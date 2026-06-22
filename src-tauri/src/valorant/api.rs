@@ -5,10 +5,24 @@ use serde_json::Value;
 
 use super::lockfile::LockfileData;
 
+// Base64-encoded platform JSON — hardcoded constant, same as RadiantConnect
+const CLIENT_PLATFORM: &str = "ew0KCSJwbGF0Zm9ybVR5cGUiOiAiUEMiLA0KCSJwbGF0Zm9ybU9TIjogIldpbmRvd3MiLA0KCSJwbGF0Zm9ybU9TVmVyc2lvbiI6ICIxMC4wLjE5MDQyLjEuMjU2LjY0Yml0IiwNCgkicGxhdGZvcm1DaGlwc2V0IjogIlVua25vd24iDQp9";
+
 fn build_client() -> Result<Client> {
     Ok(Client::builder()
         .danger_accept_invalid_certs(true)
         .build()?)
+}
+
+/// Remote auth data needed for GLZ (game server) API calls.
+/// Pregame endpoints live on the GLZ URL, not localhost.
+#[derive(Debug, Clone, Default)]
+pub struct RemoteAuth {
+    pub glz_url: String,
+    pub access_token: String,
+    pub entitlement_token: String,
+    pub client_version: String,
+    pub puuid: String,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -18,8 +32,51 @@ pub struct PlayerInfo {
     pub tag_line: String,
 }
 
-/// Fetch PUUID from the entitlements token endpoint — most reliable source.
-pub async fn get_puuid(lock: &LockfileData) -> Result<String> {
+/// Read the GLZ game-server URL from the Valorant ShooterGame log file.
+/// Valorant writes it there when it connects — RadiantConnect uses the same approach.
+pub fn read_glz_url() -> Result<String> {
+    #[cfg(target_os = "windows")]
+    let log_path = {
+        let local = dirs::data_local_dir().unwrap_or_default();
+        local.join("Valorant").join("Saved").join("Logs").join("ShooterGame.log")
+    };
+    #[cfg(not(target_os = "windows"))]
+    let log_path = std::path::PathBuf::from("/tmp/ShooterGame_nonexistent.log");
+
+    let content = std::fs::read_to_string(&log_path)
+        .map_err(|e| anyhow::anyhow!("Cannot read ShooterGame.log: {e}"))?;
+
+    let mut last_glz: Option<String> = None;
+    for line in content.lines() {
+        if let Some(idx) = line.find("https://glz") {
+            let rest = &line[idx..];
+            let end = rest
+                .find(|c: char| c.is_whitespace() || c == '"' || c == '\'')
+                .unwrap_or(rest.len());
+            let url = rest[..end].trim_end_matches('/');
+            if url.contains(".net") {
+                last_glz = Some(url.to_string());
+            }
+        }
+    }
+
+    last_glz.ok_or_else(|| {
+        anyhow::anyhow!("GLZ URL not found in ShooterGame.log — queue into a game first")
+    })
+}
+
+/// Fetch client version from valorant-api.com (best-effort, empty string on failure).
+async fn get_client_version() -> String {
+    let Ok(client) = reqwest::Client::builder().build() else { return String::new() };
+    let Ok(resp) = client.get("https://valorant-api.com/v1/version").send().await else { return String::new() };
+    let Ok(v) = resp.json::<Value>().await else { return String::new() };
+    v["data"]["riotClientVersion"].as_str().unwrap_or("").to_string()
+}
+
+/// Build the full remote auth context needed to call GLZ (pregame) endpoints.
+/// - Bearer token + Entitlement JWT from local /entitlements/v1/token
+/// - GLZ URL from Valorant ShooterGame log file
+pub async fn get_remote_auth(lock: &LockfileData) -> Result<RemoteAuth> {
     let client = build_client()?;
     let resp = client
         .get(format!("{}/entitlements/v1/token", lock.base_url()))
@@ -30,18 +87,58 @@ pub async fn get_puuid(lock: &LockfileData) -> Result<String> {
     let status = resp.status();
     let body = resp.text().await?;
     if !status.is_success() {
-        bail!("entitlements/v1/token HTTP {}: {}", status, &body[..body.len().min(200)]);
+        bail!("entitlements/v1/token HTTP {}: {}", status, &body[..body.len().min(300)]);
     }
+
     let v: Value = serde_json::from_str(&body)?;
+    let access_token = v["accessToken"].as_str().unwrap_or("").to_string();
+    let entitlement_token = v["token"].as_str().unwrap_or("").to_string();
     let puuid = v["subject"].as_str().unwrap_or("").to_string();
-    if puuid.is_empty() {
-        bail!("entitlements/v1/token: 'subject' field missing. Body: {}", &body[..body.len().min(300)]);
+
+    if access_token.is_empty() {
+        bail!("entitlements: 'accessToken' missing. Body: {}", &body[..body.len().min(300)]);
     }
-    Ok(puuid)
+    if entitlement_token.is_empty() {
+        bail!("entitlements: entitlement 'token' missing. Body: {}", &body[..body.len().min(300)]);
+    }
+
+    let glz_url = read_glz_url()?;
+    let client_version = get_client_version().await;
+
+    Ok(RemoteAuth { glz_url, access_token, entitlement_token, client_version, puuid })
 }
 
+/// Helper to build a request with all required remote headers.
+fn remote_request(
+    client: &Client,
+    method: reqwest::Method,
+    url: &str,
+    auth: &RemoteAuth,
+) -> reqwest::RequestBuilder {
+    let mut req = client
+        .request(method, url)
+        .header("Authorization", format!("Bearer {}", auth.access_token))
+        .header("X-Riot-Entitlements-JWT", &auth.entitlement_token)
+        .header("X-Riot-ClientPlatform", CLIENT_PLATFORM);
+    if !auth.client_version.is_empty() {
+        req = req.header("X-Riot-ClientVersion", &auth.client_version);
+    }
+    req
+}
+
+// ─── Local endpoints (127.0.0.1 + Basic auth) ────────────────────────────────
+
 pub async fn get_player_info(lock: &LockfileData) -> Result<PlayerInfo> {
-    let puuid = get_puuid(lock).await?;
+    let puuid = {
+        let client = build_client()?;
+        let resp = client
+            .get(format!("{}/entitlements/v1/token", lock.base_url()))
+            .header("Authorization", format!("Basic {}", lock.basic_auth()))
+            .send()
+            .await?;
+        let v: Value = resp.json().await?;
+        v["subject"].as_str().unwrap_or("").to_string()
+    };
 
     let (game_name, tag_line) = {
         let client = build_client()?;
@@ -53,9 +150,10 @@ pub async fn get_player_info(lock: &LockfileData) -> Result<PlayerInfo> {
         {
             if resp.status().is_success() {
                 if let Ok(v) = resp.json::<Value>().await {
-                    let name = v["game_name"].as_str().unwrap_or("Player").to_string();
-                    let tag = v["game_tag"].as_str().unwrap_or("").to_string();
-                    (name, tag)
+                    (
+                        v["game_name"].as_str().unwrap_or("Player").to_string(),
+                        v["game_tag"].as_str().unwrap_or("").to_string(),
+                    )
                 } else {
                     ("Player".to_string(), "".to_string())
                 }
@@ -70,7 +168,7 @@ pub async fn get_player_info(lock: &LockfileData) -> Result<PlayerInfo> {
     Ok(PlayerInfo { puuid, game_name, tag_line })
 }
 
-/// Returns (normalized_phase, raw_phase) so caller can log the raw string.
+/// Returns (normalized_phase, raw_phase).
 pub async fn get_current_phase(lock: &LockfileData) -> Result<(String, String)> {
     let client = build_client()?;
     let resp = client
@@ -89,9 +187,9 @@ pub async fn get_current_phase(lock: &LockfileData) -> Result<(String, String)> 
                 let raw = session["phase"].as_str().unwrap_or("unknown").to_string();
                 let normalized = match raw.to_lowercase().as_str() {
                     "menus" | "lobby" | "mainmenu" | "home" | "idle" => "menus",
-                    // "Gameplay" = agent select phase (confirmed from original repo)
+                    // "Gameplay" = agent select phase (confirmed from RadiantConnect source)
                     "pregame" | "agent_select" | "agentselect" | "characterselect" | "gameplay" => "pregame",
-                    // "ingame" / "ıngame" = actual in-game (match started)
+                    // "ingame" / "ıngame" = match actually started
                     "ingame" | "in_game" | "inprogress" | "ingameclient" | "ıngame" => "ingame",
                     _ => "unknown",
                 };
@@ -102,11 +200,12 @@ pub async fn get_current_phase(lock: &LockfileData) -> Result<(String, String)> 
     Ok(("menus".to_string(), "no_valorant_session".to_string()))
 }
 
-pub async fn get_pregame_match_id(lock: &LockfileData, puuid: &str) -> Result<String> {
+// ─── Remote endpoints (GLZ URL + Bearer auth) ────────────────────────────────
+
+pub async fn get_pregame_match_id(auth: &RemoteAuth) -> Result<String> {
     let client = build_client()?;
-    let resp = client
-        .get(format!("{}/pregame/v1/players/{}", lock.base_url(), puuid))
-        .header("Authorization", format!("Basic {}", lock.basic_auth()))
+    let url = format!("{}/pregame/v1/players/{}", auth.glz_url, auth.puuid);
+    let resp = remote_request(&client, reqwest::Method::GET, &url, auth)
         .send()
         .await?;
 
@@ -123,11 +222,10 @@ pub async fn get_pregame_match_id(lock: &LockfileData, puuid: &str) -> Result<St
     Ok(match_id)
 }
 
-pub async fn get_pregame_map(lock: &LockfileData, match_id: &str) -> Result<String> {
+pub async fn get_pregame_map(auth: &RemoteAuth, match_id: &str) -> Result<String> {
     let client = build_client()?;
-    let resp = client
-        .get(format!("{}/pregame/v1/matches/{}", lock.base_url(), match_id))
-        .header("Authorization", format!("Basic {}", lock.basic_auth()))
+    let url = format!("{}/pregame/v1/matches/{}", auth.glz_url, match_id);
+    let resp = remote_request(&client, reqwest::Method::GET, &url, auth)
         .send()
         .await?;
 
@@ -140,11 +238,10 @@ pub async fn get_pregame_map(lock: &LockfileData, match_id: &str) -> Result<Stri
     Ok(map_name)
 }
 
-pub async fn select_agent(lock: &LockfileData, match_id: &str, agent_id: &str) -> Result<()> {
+pub async fn select_agent(auth: &RemoteAuth, match_id: &str, agent_id: &str) -> Result<()> {
     let client = build_client()?;
-    let resp = client
-        .post(format!("{}/pregame/v1/matches/{}/select/{}", lock.base_url(), match_id, agent_id))
-        .header("Authorization", format!("Basic {}", lock.basic_auth()))
+    let url = format!("{}/pregame/v1/matches/{}/select/{}", auth.glz_url, match_id, agent_id);
+    let resp = remote_request(&client, reqwest::Method::POST, &url, auth)
         .send()
         .await?;
 
@@ -156,11 +253,10 @@ pub async fn select_agent(lock: &LockfileData, match_id: &str, agent_id: &str) -
     Ok(())
 }
 
-pub async fn lock_agent(lock: &LockfileData, match_id: &str, agent_id: &str) -> Result<()> {
+pub async fn lock_agent(auth: &RemoteAuth, match_id: &str, agent_id: &str) -> Result<()> {
     let client = build_client()?;
-    let resp = client
-        .post(format!("{}/pregame/v1/matches/{}/lock/{}", lock.base_url(), match_id, agent_id))
-        .header("Authorization", format!("Basic {}", lock.basic_auth()))
+    let url = format!("{}/pregame/v1/matches/{}/lock/{}", auth.glz_url, match_id, agent_id);
+    let resp = remote_request(&client, reqwest::Method::POST, &url, auth)
         .send()
         .await?;
 
@@ -172,11 +268,10 @@ pub async fn lock_agent(lock: &LockfileData, match_id: &str, agent_id: &str) -> 
     Ok(())
 }
 
-pub async fn quit_pregame(lock: &LockfileData, match_id: &str) -> Result<()> {
+pub async fn quit_pregame(auth: &RemoteAuth, match_id: &str) -> Result<()> {
     let client = build_client()?;
-    let resp = client
-        .post(format!("{}/pregame/v1/matches/{}/quit", lock.base_url(), match_id))
-        .header("Authorization", format!("Basic {}", lock.basic_auth()))
+    let url = format!("{}/pregame/v1/matches/{}/quit", auth.glz_url, match_id);
+    let resp = remote_request(&client, reqwest::Method::POST, &url, auth)
         .send()
         .await?;
 
