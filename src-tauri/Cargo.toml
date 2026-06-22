@@ -1,6 +1,6 @@
 [package]
 name = "val-insta-locker"
-version = "0.1.4"
+version = "0.1.5"
 description = "Valorant Instalocker — Tauri + React"
 authors = ["you"]
 edition = "2021"

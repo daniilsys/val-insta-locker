@@ -14,7 +14,7 @@ export default function App() {
   const {
     activeView,
     setConnected, setUsername, setPhase, setCurrentMap,
-    setRunning, setLocked,
+    setLocked,
     setAgents, setAgentsLoaded,
     setConfig, addLog,
   } = useStore();
@@ -65,7 +65,6 @@ export default function App() {
 
     listen<boolean>("lock-status", e => {
       setLocked(e.payload);
-      if (!e.payload) setRunning(false);
     }).then(u => unsubs.push(u));
 
     listen<string>("agent-locked", e => {

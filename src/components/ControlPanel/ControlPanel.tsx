@@ -225,8 +225,8 @@ export function ControlPanel() {
         {/* Divider */}
         <div style={{ height:1, background:"var(--border)", margin:"4px 0 14px" }} />
 
-        {/* ARM / CANCEL / LOCKED button */}
-        {!isRunning && !isLocked && (
+        {/* ARM / DISARM / LOCKED */}
+        {!isRunning && (
           <button
             onClick={handleArm}
             disabled={!canArm}
@@ -247,10 +247,10 @@ export function ControlPanel() {
               textAlign:"center",
             }}>
               <p style={{ fontSize:10, fontWeight:700, color:"var(--red)", letterSpacing:"0.12em", textTransform:"uppercase" }}>
-                Waiting for
+                Armed
               </p>
-              <p style={{ fontSize:10, fontWeight:700, color:"var(--red)", letterSpacing:"0.12em", textTransform:"uppercase" }}>
-                agent select...
+              <p style={{ fontSize:10, fontWeight:600, color:"var(--red)", letterSpacing:"0.06em", opacity:0.7, marginTop:2 }}>
+                Waiting for agent select...
               </p>
             </div>
             <button onClick={handleCancel} className="btn-ghost" style={{ width:"100%" }}>
@@ -260,20 +260,29 @@ export function ControlPanel() {
           </div>
         )}
 
-        {isLocked && (
-          <div
-            className="anim-locked-in"
-            style={{
-              padding:"10px 14px",
-              background:"rgba(74,222,128,0.08)",
-              border:"1px solid rgba(74,222,128,0.3)",
-              clipPath:"polygon(0 0, calc(100% - 8px) 0, 100% 8px, 100% 100%, 8px 100%, 0 calc(100% - 8px))",
-              textAlign:"center",
-            }}
-          >
-            <p style={{ fontSize:11, fontWeight:700, color:"var(--green)", letterSpacing:"0.12em", textTransform:"uppercase" }}>
-              ✓ Agent Locked
-            </p>
+        {isRunning && isLocked && (
+          <div style={{ display:"flex", flexDirection:"column", gap:8 }}>
+            <div
+              className="anim-locked-in"
+              style={{
+                padding:"10px 14px",
+                background:"rgba(74,222,128,0.08)",
+                border:"1px solid rgba(74,222,128,0.3)",
+                clipPath:"polygon(0 0, calc(100% - 8px) 0, 100% 8px, 100% 100%, 8px 100%, 0 calc(100% - 8px))",
+                textAlign:"center",
+              }}
+            >
+              <p style={{ fontSize:11, fontWeight:700, color:"var(--green)", letterSpacing:"0.12em", textTransform:"uppercase" }}>
+                ✓ Agent Locked
+              </p>
+              <p style={{ fontSize:9, fontWeight:600, color:"var(--green)", opacity:0.6, marginTop:2, letterSpacing:"0.06em" }}>
+                Armed for next game
+              </p>
+            </div>
+            <button onClick={handleCancel} className="btn-ghost" style={{ width:"100%" }}>
+              <X size={12} />
+              Disarm
+            </button>
           </div>
         )}
 
