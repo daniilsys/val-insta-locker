@@ -121,8 +121,9 @@ pub async fn poll_phase(state: State<'_, AppState>, app: AppHandle) -> Result<St
         log(&app, format!("Phase: {} → {}", old_phase, phase));
         let _ = app.emit("phase-changed", &phase);
 
-        // Any phase change resets lock state so the next game can be locked
-        {
+        // Reset lock state only when back in menus (game over / dodge)
+        // so we don't re-poll a match we already locked
+        if phase == "menus" {
             let mut s = state.lock().await;
             s.is_locked = false;
             s.pregame_match_id.clear();
