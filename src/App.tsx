@@ -42,11 +42,13 @@ export default function App() {
 
       try {
         const agents = await invoke<any[]>("get_agents");
-        setAgents(agents);
+        if (agents && agents.length > 0) {
+          setAgents(agents);
+        }
         setAgentsLoaded(true);
         addLog(`Loaded ${agents.length} agents`);
       } catch (e) {
-        addLog(`Failed to load agents: ${e}`);
+        addLog(`Failed to load live agents, using built-in roster: ${e}`);
         setAgentsLoaded(true);
       }
 
